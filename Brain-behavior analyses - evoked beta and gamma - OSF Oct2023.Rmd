@@ -1,0 +1,292 @@
+---
+title: 'Brain-behavior analyses: evoked beta and gamma - OSF October 2023'
+author: "Valentina Persici"
+date: "10/17/2023"
+output:
+  word_document: default
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Loading the libraries and setting the working directory
+```{r}
+library(readr)
+library(ppcor)
+library(psych)
+library(jtools)
+library(lmtest)
+library(broom)
+
+setwd(***ADD PATH HERE***)
+```
+
+# Loading the datasets
+
+## This section loads the dataset containing the children's behavioral data.
+```{r}
+Behavioral_dataset <- read_csv("Behavioral_data.csv")
+Behavioral_dataset <- Behavioral_dataset[,-1]
+```
+
+## This section loads the beta evoked cluster sums.
+```{r}
+EEG_beta_Beat1effect <- read.table("EEG_beta_Beat1effect_clustersums.txt",
+               sep="\t",
+               col.names=c("Study_ID", "EEG_beta_Beat1effect", "EEG_beta_Beat1effect_Accent1", "EEG_beta_Beat1effect_Accent2"),
+               fill=FALSE,
+               strip.white=TRUE)
+
+EEG_beta_Beat2effect = read.table("EEG_beta_Beat2effect_clustersums.txt",
+                     sep="\t",
+                     col.names=c("Study_ID", "EEG_beta_Beat2effect", "EEG_beta_Beat2effect_Accent1", "EEG_beta_Beat2effect_Accent2"),
+                     fill=FALSE,
+                     strip.white=TRUE)
+```
+
+
+## This section loads the evoked gamma cluster sums.
+```{r}
+EEG_gamma_Beat1effect = read.table("EEG_gamma_Beat1effect_clustersums.txt",
+               sep="\t",
+               col.names=c("Study_ID", "EEG_gamma_Beat1effect", "EEG_gamma_Beat1effect_Accent1", "EEG_gamma_Beat1effect_Accent2"),
+               fill=FALSE,
+               strip.white=TRUE)
+
+EEG_gamma_Beat2effect = read.table("EEG_gamma_Beat2effect_clustersums.txt",
+                     sep="\t",
+                     col.names=c("Study_ID", "EEG_gamma_Beat2effect", "EEG_gamma_Beat2effect_Accent1", "EEG_gamma_Beat2effect_Accent2"),
+                     fill=FALSE,
+                     strip.white=TRUE)
+```
+
+## This section merges the behavioral, evoked beta, and evoked gamma datasets together.
+```{r}
+Evoked_beta <- merge(EEG_beta_Beat1effect, EEG_beta_Beat2effect, by=c("Study_ID"))
+Evoked_gamma <- merge(EEG_gamma_Beat1effect, EEG_gamma_Beat2effect, by=c("Study_ID"))
+
+Evoked_variables <- merge(Evoked_beta, Evoked_gamma, by=c("Study_ID"))
+
+Full_dataset <- merge(Behavioral_dataset, Evoked_variables, by=c("Study_ID"))
+```
+
+# Defining variable class:
+```{r}
+# Demographic variables
+Full_dataset$Study_ID <- as.factor(Full_dataset$Study_ID)
+Full_dataset$Age <- as.numeric(Full_dataset$Age)
+
+# Behavioral variables (PTONI_raw, Rhythm_Composite_Score, SPELT3_zscore, Transformation_zscore, ComplexSyntax_zscore)
+Full_dataset[,c(7,12,20:22)] <- sapply(Full_dataset[,c(7,12,20:22)], as.numeric)
+
+## EEG variables (EEG_beta_Beat1effect, EEG_beta_Beat2effect, EEG_gamma_Beat1effect, EEG_gamma_Beat2effect)
+Full_dataset[,c(23, 26, 29, 32)] <- sapply(Full_dataset[,c(23, 26, 29, 32)], as.numeric)
+```
+
+# Using the Shapiro-Wilk test to check whether the variables of interest are normally distributed:
+```{r}
+lapply(Full_dataset[,c(7,12,20:23,26,29,32)], shapiro.test)
+```
+EEG_gamma_Beat2effect, Transformation, and Complex syntax are not normally distributed.
+
+# Correlation to see if z-scored BBA and z-scored PMMA are correlated
+```{r}
+shapiro.test(Full_dataset$PMMA_zscores)
+shapiro.test(Full_dataset$BBA_zscores)
+cor.test(Full_dataset$PMMA_zscores, Full_dataset$BBA_zscores)
+```
+
+# Paired t-tests to investigate potential differences in the magnitude of activity between cluster-sums within the same frequency band
+First, we reverse direction for negative clusters on Beat2. 
+```{r}
+Full_dataset$EEG_beta_Beat2effect <- Full_dataset$EEG_beta_Beat2effect_Accent2 - Full_dataset$EEG_beta_Beat2effect_Accent1
+Full_dataset$EEG_gamma_Beat2effect <- Full_dataset$EEG_gamma_Beat2effect_Accent2 - Full_dataset$EEG_gamma_Beat2effect_Accent1
+
+
+t.test(Full_dataset$EEG_beta_Beat1effect, Full_dataset$EEG_beta_Beat2effect, paired = T)
+
+t.test(Full_dataset$EEG_gamma_Beat1effect, Full_dataset$EEG_gamma_Beat2effect, paired = T)
+```
+
+
+# CORRELATIONS
+Spearman correlations between the SPELT-3 and evoked variables of interest, controlling for age, non-verbal intelligence, music experience, and maternal education. The results of these analyses are reported in Table 3.
+
+## Correlations between EEG clusters and SPELT measures
+```{r}
+EEG_MATRIX <- Full_dataset[,c(3:6,20:23,26,29,32)]
+
+# With the Bonferroni correction
+eeg_cor <- partial.r(EEG_MATRIX, c(5:11), c(1:4),use="pairwise",method="spearman")
+
+# With the Benjamini-Hochberg correction
+eeg_cor_BH <- corr.p(eeg_cor, n=21, adjust="BH", ci = TRUE)
+
+# r
+print(eeg_cor_BH$r, digits = 2)
+# p
+print(eeg_cor_BH$p, digits = 3) # look above the diagnonal to see the corrected probabilities.
+```
+
+# HIERARCHICAL REGRESSIONS
+This section creates, first, the base model on SPELT-3 total scores with age, non-verbal intelligence, Rhythm Composite score, and maternal education as predictors. Then, it creates a second model that additionally includes one of the evoked variables. Finally, it compares the first and second model using the anova() function. This is done to see whether adding the evoked variables significantly improves the model's ability to predict variance in the children's grammar scores. The results of these analyses are reported in Table 4 and in Table 4S.
+
+```{r}
+basemodel_SPELT <- lm(SPELT3_zscore ~ Age + PTONI_raw + Music_Experience + Parent_Educ + Rhythm_Composite_Score, data = Full_dataset, na.action = na.omit)
+# To get standardized coefficients for each predictor in the model:
+summ(basemodel_SPELT, scale = T, digits = 3)
+# To get AIC and BIC values:
+glance(basemodel_SPELT)
+
+### Entering the EEG_beta_Beat1effect cluster as additional predictor in the model:
+SPELT_EEG_beta_Beat1effect <- update(basemodel_SPELT, ~. + EEG_beta_Beat1effect)
+# Model comparison:
+anova(basemodel_SPELT, SPELT_EEG_beta_Beat1effect)
+
+# To get standardized coefficients for each predictor in the model:
+summ(SPELT_EEG_beta_Beat1effect, scale = T, digits = 3)
+# To get AIC and BIC values:
+glance(SPELT_EEG_beta_Beat1effect)
+```
+
+### This time the additional predictor is the EEG_beta_Beat2effect cluster:
+```{r}
+SPELT_EEG_beta_Beat2effect <- update(basemodel_SPELT, ~. + EEG_beta_Beat2effect)
+# Model comparison:
+anova(basemodel_SPELT, SPELT_EEG_beta_Beat2effect)
+# To get standardized coefficients for each predictor in the model:
+summ(SPELT_EEG_beta_Beat2effect, scale = T, digits = 3)
+# To get AIC and BIC values:
+glance(SPELT_EEG_beta_Beat2effect)
+```
+
+### This time the additional predictor is the EEG_gamma_Beat1effect cluster:
+```{r}
+SPELT_EEG_gamma_Beat1effect <- update(basemodel_SPELT, ~. + EEG_gamma_Beat1effect)
+# Model comparison:
+anova(basemodel_SPELT, SPELT_EEG_gamma_Beat1effect)
+# To get standardized coefficients for each predictor in the model:
+summ(SPELT_EEG_gamma_Beat1effect, scale = T, digits = 3)
+# To get AIC and BIC values:
+glance(SPELT_EEG_gamma_Beat1effect)
+```
+
+### This time the additional predictor is EEG_gamma_Beat2effect cluster:
+```{r}
+SPELT_EEG_gamma_Beat2effect <- update(basemodel_SPELT, ~. + EEG_gamma_Beat2effect)
+# Model comparison:
+anova(basemodel_SPELT, SPELT_EEG_gamma_Beat2effect)
+# To get standardized coefficients for each predictor in the model:
+summ(SPELT_EEG_gamma_Beat2effect, scale = T, digits = 3)
+# To get AIC and BIC values:
+glance(SPELT_EEG_gamma_Beat2effect)
+```
+
+# Transformation
+```{r}
+basemodel_TR <- lm(Transformation_zscore ~ Age + PTONI_raw + Music_Experience + Parent_Educ +  Rhythm_Composite_Score, data = Full_dataset, na.action = na.omit)
+# To get standardized coefficients for each predictor in the model:
+summ(basemodel_TR, scale = T, digits = 3)
+# To get AIC and BIC values:
+glance(basemodel_TR)
+```
+
+### Entering EEG_beta_Beat1effect cluster as additional predictor in the model:
+```{r}
+TR_EEG_beta_Beat1effect <- update(basemodel_TR, ~. + EEG_beta_Beat1effect)
+# Model comparison:
+anova(basemodel_TR, TR_EEG_beta_Beat1effect)
+# To get standardized coefficients for each predictor in the model:
+summ(TR_EEG_beta_Beat1effect, scale = T, digits = 3)
+# To get AIC and BIC values:
+glance(TR_EEG_beta_Beat1effect)
+```
+
+### OR EEG_beta_Beat2effect:
+```{r}
+TR_EEG_beta_Beat2effect <- update(basemodel_TR, ~. + EEG_beta_Beat2effect)
+# Model comparison:
+anova(basemodel_TR, TR_EEG_beta_Beat2effect)
+# To get standardized coefficients for each predictor in the model:
+summ(TR_EEG_beta_Beat2effect, scale = T, digits = 3)
+# To get AIC and BIC values:
+glance(TR_EEG_beta_Beat2effect)
+```
+
+### OR EEG_gamma_Beat1effect:
+```{r}
+TR_EEG_gamma_Beat1effect <- update(basemodel_TR, ~. + EEG_gamma_Beat1effect)
+# Model comparison:
+anova(basemodel_TR, TR_EEG_gamma_Beat1effect)
+# To get standardized coefficients for each predictor in the model:
+summ(TR_EEG_gamma_Beat1effect, scale = T, digits = 3)
+# To get AIC and BIC values:
+glance(TR_EEG_gamma_Beat1effect)
+```
+
+### OR EEG_gamma_Beat2effect:
+```{r}
+TR_EEG_gamma_Beat2effect <- update(basemodel_TR, ~. + EEG_gamma_Beat2effect)
+# Model comparison:
+anova(basemodel_TR, TR_EEG_gamma_Beat2effect)
+# To get standardized coefficients for each predictor in the model:
+summ(TR_EEG_gamma_Beat2effect, scale = T, digits = 3)
+# To get AIC and BIC values:
+glance(TR_EEG_gamma_Beat2effect)
+```
+
+
+## This section repeats the process described above on Complex Syntax scores.
+```{r}
+basemodel_CS <- lm(ComplexSyntax_zscore ~ Age + PTONI_raw + Music_Experience + Parent_Educ +  Rhythm_Composite_Score, data = Full_dataset, na.action = na.omit)
+# To get standardized coefficients for each predictor in the model:
+summ(basemodel_CS, scale = T, digits = 3)
+# To get AIC and BIC values:
+glance(basemodel_CS)
+```
+
+### Entering EEG_beta_Beat1effect cluster as additional predictor in the model:
+```{r}
+CS_EEG_beta_Beat1effect <- update(basemodel_CS, ~. + EEG_beta_Beat1effect)
+# Model comparison:
+anova(basemodel_CS, CS_EEG_beta_Beat1effect)
+# To get standardized coefficients for each predictor in the model:
+summ(CS_EEG_beta_Beat1effect, scale = T, digits = 3)
+# To get AIC and BIC values:
+glance(CS_EEG_beta_Beat1effect)
+```
+
+### OR EEG_beta_Beat2effect:
+```{r}
+CS_EEG_beta_Beat2effect <- update(basemodel_CS, ~. + EEG_beta_Beat2effect)
+# Model comparison:
+anova(basemodel_CS, CS_EEG_beta_Beat2effect)
+# To get standardized coefficients for each predictor in the model:
+summ(CS_EEG_beta_Beat2effect, scale = T, digits = 3)
+# To get AIC and BIC values:
+glance(CS_EEG_beta_Beat2effect)
+```
+
+### OR EEG_gamma_Beat1effect:
+```{r}
+CS_EEG_gamma_Beat1effect <- update(basemodel_CS, ~. + EEG_gamma_Beat1effect)
+# Model comparison:
+anova(basemodel_CS, CS_EEG_gamma_Beat1effect)
+# To get standardized coefficients for each predictor in the model:
+summ(CS_EEG_gamma_Beat1effect, scale = T, digits = 3)
+# To get AIC and BIC values:
+glance(CS_EEG_gamma_Beat1effect)
+```
+
+### OR EEG_gamma_Beat2effect:
+```{r}
+CS_EEG_gamma_Beat2effect <- update(basemodel_CS, ~. + EEG_gamma_Beat2effect)
+# Model comparison:
+anova(basemodel_CS, CS_EEG_gamma_Beat2effect)
+# To get standardized coefficients for each predictor in the model:
+summ(CS_EEG_gamma_Beat2effect, scale = T, digits = 3)
+# To get AIC and BIC values:
+glance(CS_EEG_gamma_Beat2effect)
+```
