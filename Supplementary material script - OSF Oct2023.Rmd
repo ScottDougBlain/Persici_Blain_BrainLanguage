@@ -1,0 +1,369 @@
+---
+title: 'Supplement scripts - October 2023'
+author: "Valentina Persici"
+date: "10/17/2023"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Loading the libraries
+```{r}
+library(readr)
+library(psych)
+library(jtools)
+library(lmtest)
+library(broom)
+
+setwd(***ADD PATH HERE***)
+```
+
+# Loading the datasets
+## This section loads the dataset containing the children's behavioral data.
+```{r}
+Behavioral_dataset <- read_csv("Behavioral_data.csv")
+Behavioral_dataset <- Behavioral_dataset[,-1]
+```
+
+## This section loads the ERP data.
+```{r}
+Beat1effect_frontal = read.table("Beat1_early_negativity_frontal_clustersums.txt", 
+               sep="\t", 
+               col.names=c("Study_ID", "Beat1effect_frontal", "Beat1effect_frontal_Accent1", "Beat1effect_frontal_Accent2"), 
+               fill=FALSE, 
+               strip.white=TRUE)
+
+Beat1effect_posterior = read.table("Beat1_early_positivity_posterior_clustersums.txt", 
+               sep="\t", 
+               col.names=c("Study_ID", "Beat1effect_posterior", "Beat1effect_posterior_Accent1", "Beat1effect_posterior_Accent2"), 
+               fill=FALSE, 
+               strip.white=TRUE)
+
+Beat2effect_frontal1 = read.table("Beat2_late_negativity_frontal1_clustersums.txt", 
+               sep="\t", 
+               col.names=c("Study_ID", "Beat2effect_frontal1", "Beat2effect_frontal1_Accent1", "Beat2effect_frontal1_Accent2"), 
+               fill=FALSE, 
+               strip.white=TRUE)
+
+Beat2effect_posterior = read.table("Beat2_late_positivity_posterior_clustersums.txt", 
+               sep="\t", 
+               col.names=c("Study_ID", "Beat2effect_posterior", "Beat2effect_posterior_Accent1", "Beat2effect_posterior_Accent2"), 
+               fill=FALSE, 
+               strip.white=TRUE)
+
+Beat2effect_frontal2 = read.table("Beat2_late_negativity_frontal2_clustersums.txt", 
+               sep="\t", 
+               col.names=c("Study_ID", "Beat2effect_frontal2", "Beat2effect_frontal2_Accent1", "Beat2effect_frontal2_Accent2"), 
+               fill=FALSE, 
+               strip.white=TRUE)
+```
+
+## This section merges the ERP cluster and the behavioral datasets together.
+```{r}
+ERP_Beat1effect <- merge(Beat1effect_frontal, Beat1effect_posterior, by=c("Study_ID"))
+ERP_Beat2effect <- merge(Beat2effect_frontal1, Beat2effect_posterior, by=c("Study_ID"))
+ERP_Beat2effect <- merge(ERP_Beat2effect, Beat2effect_frontal2, by=c("Study_ID"))
+
+ERP <- merge(ERP_Beat1effect, ERP_Beat2effect, by=c("Study_ID"))
+
+Full_dataset <- merge(Behavioral_dataset, ERP, by=c("Study_ID"))
+```
+
+# Defining variable class:
+```{r}
+# Demographic variables
+Full_dataset$Study_ID <- as.factor(Full_dataset$Study_ID)
+Full_dataset$Age <- as.numeric(Full_dataset$Age)
+
+# Behavioral variables (PTONI_raw, Rhythm_Composite_Score, SPELT3_zscore, Transformation_zscore, ComplexSyntax_zscore)
+Full_dataset[,c(7,12,20:22)] <- sapply(Full_dataset[,c(7,12,20:22)], as.numeric)
+
+## ERP variables (Beat1effect_frontal, Beat1effect_posterior, Beat2effect_frontal1, Beat2effect_posterior, Beat2effect_frontal2)
+Full_dataset[,c(23,26,29,32,35)] <- sapply(Full_dataset[,c(23,26,29,32,35)], as.numeric)
+```
+
+# CORRELATIONS
+Spearman correlations between the SPELT-3 and ERP variables of interest, controlling for age, non-verbal intelligence, music experience, and maternal education. First, we reverse direction for the negative cluster on Beat2 (ERP-Beat2effect-late-negativity-frontal1). The results of these analyses are shown in Table 1S.
+```{r}
+Full_dataset$Beat2effect_frontal1 <- Full_dataset$Beat2effect_frontal1_Accent2 - Full_dataset$Beat2effect_frontal1_Accent1
+cor_data <- Full_dataset[,c(3:6,20,22,21,23,26,29,32,35)]
+
+erp.cor <- partial.r(cor_data, c(5:12), c(1:4),use="pairwise",method="spearman")
+
+# With the Benjamini-Hochberg correction
+cp_BH <- corr.p(erp.cor, n=21, adjust="BH", ci = TRUE)
+# r
+print(cp_BH$r, digits = 2)
+# p
+print(cp_BH$p, digits = 3) # look above the diagnonal to see the corrected probabilities.
+```
+
+
+# HIERARCHICAL REGRESSIONS
+This section creates, first, the base model on SPELT-3 total scores with age, nonverbal intelligence, music experience, maternal education, and Rhythm Composite score as predictors. Then, it creates a second model that additionally includes one of the ERP variables. Finally, it compares the first and second model using the anova() function. This is done to see whether adding the ERP variables significantly improves the model's ability to predict variance in the children's grammar scores. The results of these analyses are shown in Table 2S.
+
+## SPELT-3 total score
+```{r}
+basemodel_SPELT <- lm(SPELT3_zscore ~ Age + PTONI_raw + Music_Experience + Parent_Educ + Rhythm_Composite_Score, data = Full_dataset, na.action = na.omit)
+# To get standardized coefficients for each predictor in the model:
+summ(basemodel_SPELT, scale = T, digits = 3)
+# To get AIC and BIC values:
+glance(basemodel_SPELT) # to get AIC and BIC values
+```
+
+### Entering ERP-Beat1effect-early-negativity-frontal as additional predictor in the model:
+```{r}
+SPELT_Beat1_frontal <- update(basemodel_SPELT, ~. + Beat1effect_frontal)
+# Model comparison using an F-test:
+anova(basemodel_SPELT, SPELT_Beat1_frontal)
+# To get standardized coefficients for each predictor in the model:
+summ(SPELT_Beat1_frontal, scale = T, digits = 3)
+# To get AIC and BIC values:
+glance(SPELT_Beat1_frontal)
+```
+
+### This time the additional predictor is ERP-Beat1effect-early-positivity-posterior:
+```{r}
+SPELT_Beat1effect_posterior <- update(basemodel_SPELT, ~. + Beat1effect_posterior)
+# Model comparison:
+anova(basemodel_SPELT, SPELT_Beat1effect_posterior)
+# To get standardized coefficients for each predictor in the model:
+summ(SPELT_Beat1effect_posterior, scale = T, digits = 3)
+# To get AIC and BIC values:
+glance(SPELT_Beat1effect_posterior)
+```
+
+### This time the additional predictor is ERP-Beat2effect-late-negativity-frontal1:
+```{r}
+SPELT_Beat2effect_frontal1 <- update(basemodel_SPELT, ~. + Beat2effect_frontal1)
+# Model comparison:
+anova(basemodel_SPELT, SPELT_Beat2effect_frontal1)
+# To get standardized coefficients for each predictor in the model:
+summ(SPELT_Beat2effect_frontal1, scale = T, digits = 3)
+# To get AIC and BIC values:
+glance(SPELT_Beat2effect_frontal1)
+```
+
+### This time the additional predictor is ERP-Beat2effect-late-positivity-posterior:
+```{r}
+SPELT_Beat2effect_posterior <- update(basemodel_SPELT, ~. + Beat2effect_posterior)
+# Model comparison:
+anova(basemodel_SPELT, SPELT_Beat2effect_posterior)
+# To get standardized coefficients for each predictor in the model:
+summ(SPELT_Beat2effect_posterior, scale = T, digits = 3)
+# To get AIC and BIC values:
+glance(SPELT_Beat2effect_posterior)
+```
+
+### This time the additional predictor is ERP-Beat2effect-late-negativity-frontal2:
+```{r}
+SPELT_Beat2effect_frontal2 <- update(basemodel_SPELT, ~. + Beat2effect_frontal2)
+# Model comparison:
+anova(basemodel_SPELT, SPELT_Beat2effect_frontal2)
+# To get standardized coefficients for each predictor in the model:
+summ(SPELT_Beat2effect_frontal2, scale = T, digits = 3)
+# To get AIC and BIC values:
+glance(SPELT_Beat2effect_frontal2)
+```
+
+## This section repeats the process described above on Transformation scores.
+```{r}
+basemodel_TR <- lm(Transformation_zscore ~ Age + PTONI_raw + Music_Experience + Parent_Educ + Rhythm_Composite_Score, data = Full_dataset, na.action = na.omit)
+# To get standardized coefficients for each predictor in the model:
+summ(basemodel_TR, scale = T, digits = 3)
+# To get AIC and BIC values:
+glance(basemodel_TR)
+```
+
+# Entering ERP-Beat1effect-early-negativity-frontal as additional predictor in the model:
+```{r}
+TR_ERP_Beat1effect_frontal <- update(basemodel_TR, ~. + Beat1effect_frontal)
+# Model comparison:
+anova(basemodel_TR, TR_ERP_Beat1effect_frontal)
+# To get standardized coefficients for each predictor in the model:
+summ(TR_ERP_Beat1effect_frontal, scale = T, digits = 3)
+# To get AIC and BIC values:
+glance(TR_ERP_Beat1effect_frontal)
+```
+
+# OR ERP-Beat1effect-early-positivity-posterior:
+```{r}
+TR_ERP_Beat1effect_posterior <- update(basemodel_TR, ~. + Beat1effect_posterior)
+# Model comparison:
+anova(basemodel_TR, TR_ERP_Beat1effect_posterior)
+# To get standardized coefficients for each predictor in the model:
+summ(TR_ERP_Beat1effect_posterior, scale = T, digits = 3)
+# To get AIC and BIC values:
+glance(TR_ERP_Beat1effect_posterior)
+# To plot model effects:
+plot(allEffects(TR_ERP_Beat1effect_posterior))
+```
+
+# OR ERP-Beat2effect-late-negativity-frontal1:
+```{r}
+TR_Beat2effect_frontal1 <- update(basemodel_TR, ~. + Beat2effect_frontal1)
+# Model comparison:
+anova(basemodel_TR, TR_Beat2effect_frontal1)
+# To get standardized coefficients for each predictor in the model:
+summ(TR_Beat2effect_frontal1, scale = T, digits = 3)
+# To get AIC and BIC values:
+glance(TR_Beat2effect_frontal1)
+```
+
+# OR ERP-Beat2effect-late-positivity-posterior:
+```{r}
+TR_Beat2effect_posterior <- update(basemodel_TR, ~. + Beat2effect_posterior)
+# Model comparison:
+anova(basemodel_TR, TR_Beat2effect_posterior)
+# To get standardized coefficients for each predictor in the model:
+summ(TR_Beat2effect_posterior, scale = T, digits = 3)
+# To get AIC and BIC values:
+glance(TR_Beat2effect_posterior)
+```
+
+# OR ERP-Beat2effect-late-negativity-frontal2
+```{r}
+TR_Beat2effect_frontal2 <- update(basemodel_TR, ~. + Beat2effect_frontal2)
+# Model comparison:
+anova(basemodel_TR, TR_Beat2effect_frontal2)
+# To get standardized coefficients for each predictor in the model:
+summ(TR_Beat2effect_frontal2, scale = T, digits = 3)
+# To get AIC and BIC values:
+glance(TR_Beat2effect_frontal2)
+```
+
+## This section repeats the same process on Complex Syntax scores.
+```{r}
+basemodel_CS <- lm(ComplexSyntax_zscore ~ Age + PTONI_raw + Music_Experience + Parent_Educ + Rhythm_Composite_Score, data = Full_dataset, na.action = na.omit)
+# To get standardized coefficients for each predictor in the model:
+summ(basemodel_CS, scale = T, digits = 3)
+# To get AIC and BIC values:
+glance(basemodel_CS)
+```
+
+# Entering ERP-Beat1effect-early-negativity-frontal as additional predictor in the model:
+```{r}
+CS_Beat1effect_frontal <- update(basemodel_CS, ~. + Beat1effect_frontal)
+# Model comparison:
+anova(basemodel_CS, CS_Beat1effect_frontal)
+# To get standardized coefficients for each predictor in the model:
+summ(CS_Beat1effect_frontal, scale = T, digits = 3)
+# To get AIC and BIC values:
+glance(CS_Beat1effect_frontal)
+```
+
+# OR ERP-Beat1effect-early-positivity-posterior:
+```{r}
+CS_Beat1effect_posterior <- update(basemodel_CS, ~. + Beat1effect_posterior)
+# Model comparison:
+anova(basemodel_CS, CS_Beat1effect_posterior)
+# To get standardized coefficients for each predictor in the model:
+summ(CS_Beat1effect_posterior, scale = T, digits = 3)
+# To get AIC and BIC values:
+glance(CS_Beat1effect_posterior)
+```
+
+# OR ERP-Beat2effect-late-negativity-frontal1:
+```{r}
+CS_Beat2effect_frontal1 <- update(basemodel_CS, ~. + Beat2effect_frontal1)
+# Model comparison:
+anova(basemodel_CS, CS_Beat2effect_frontal1)
+# To get standardized coefficients for each predictor in the model:
+summ(CS_Beat2effect_frontal1, scale = T, digits = 3)
+# To get AIC and BIC values:
+glance(CS_Beat2effect_frontal1)
+```
+
+# OR ERP-Beat2effect-late-positivity-posterior:
+```{r}
+CS_Beat2effect_posterior <- update(basemodel_CS, ~. + Beat2effect_posterior)
+# Model comparison:
+anova(basemodel_CS, CS_Beat2effect_posterior)
+# To get standardized coefficients for each predictor in the model:
+summ(CS_Beat2effect_posterior, scale = T, digits = 3)
+# To get AIC and BIC values:
+glance(CS_Beat2effect_posterior)
+```
+
+# OR ERP-Beat2effect-late-negativity-frontal2:
+```{r}
+CS_Beat2effect_frontal2 <- update(basemodel_CS, ~. + Beat2effect_frontal2)
+# Model comparison:
+anova(basemodel_CS, CS_Beat2effect_frontal2)
+# To get standardized coefficients for each predictor in the model:
+summ(CS_Beat2effect_frontal2, scale = T, digits = 3)
+# To get AIC and BIC values:
+glance(CS_Beat2effect_frontal2)
+```
+
+## Correlations between activity in beta and gamma and between Beat1 and Beat2 effect clusters within each frequency band.
+These results are shown in Table 3S.
+```{r}
+## This section loads the beta evoked cluster sums.
+EEG_beta_Beat1effect <- read.table("EEG_beta_Beat1effect_clustersums.txt", 
+               sep="\t", 
+               col.names=c("Study_ID", "EEG_beta_Beat1effect", "EEG_beta_Beat1effect_Accent1", "EEG_beta_Beat1effect_Accent2"), 
+               fill=FALSE, 
+               strip.white=TRUE)
+
+EEG_beta_Beat2effect = read.table("EEG_beta_Beat2effect_clustersums.txt", 
+                     sep="\t", 
+                     col.names=c("Study_ID", "EEG_beta_Beat2effect", "EEG_beta_Beat2effect_Accent1", "EEG_beta_Beat2effect_Accent2"), 
+                     fill=FALSE, 
+                     strip.white=TRUE)
+
+## This section loads the evoked gamma cluster sums.
+EEG_gamma_Beat1effect = read.table("EEG_gamma_Beat1effect_clustersums.txt", 
+               sep="\t", 
+               col.names=c("Study_ID", "EEG_gamma_Beat1effect", "EEG_gamma_Beat1effect_Accent1", "EEG_gamma_Beat1effect_Accent2"), 
+               fill=FALSE, 
+               strip.white=TRUE)
+
+EEG_gamma_Beat2effect = read.table("EEG_gamma_Beat2effect_clustersums.txt", 
+                     sep="\t", 
+                     col.names=c("Study_ID", "EEG_gamma_Beat2effect", "EEG_gamma_Beat2effect_Accent1", "EEG_gamma_Beat2effect_Accent2"), 
+                     fill=FALSE, 
+                     strip.white=TRUE)
+
+## This section merges the behavioral, evoked beta, and evoked gamma datasets together.
+Evoked_beta <- merge(EEG_beta_Beat1effect, EEG_beta_Beat2effect, by=c("Study_ID"))
+Evoked_gamma <- merge(EEG_gamma_Beat1effect, EEG_gamma_Beat2effect, by=c("Study_ID"))
+
+Evoked_variables <- merge(Evoked_beta, Evoked_gamma, by=c("Study_ID"))
+
+Full_dataset_evoked <- merge(Behavioral_dataset, Evoked_variables, by=c("Study_ID"))
+```
+
+# Defining variable class:
+```{r}
+# Demographic variables
+Full_dataset_evoked$Study_ID <- as.factor(Full_dataset_evoked$Study_ID)
+Full_dataset_evoked$Age <- as.numeric(Full_dataset_evoked$Age)
+
+# Behavioral variables (PTONI_raw, Rhythm_Composite_Score, SPELT3_zscore, Transformation_zscore, ComplexSyntax_zscore)
+Full_dataset_evoked[,c(7,12,20:22)] <- sapply(Full_dataset_evoked[,c(7,12,20:22)], as.numeric)
+
+## EEG clusters (EEG_beta_Beat1effect, EEG_beta_Beat2effect, EEG_gamma_Beat1effect, EEG_gamma_Beat2effect)
+Full_dataset_evoked[, c(23,26,29,32)] <- sapply(Full_dataset_evoked[, c(23,26,29,32)], as.numeric)
+```
+
+# Partial correlation matrix. First, we reverse direction for negative clusters on Beat2.
+```{r}
+Full_dataset_evoked$EEG_beta_Beat2effect <- Full_dataset_evoked$EEG_beta_Beat2effect_Accent2 - Full_dataset_evoked$EEG_beta_Beat2effect_Accent1
+Full_dataset_evoked$EEG_gamma_Beat2effect <- Full_dataset_evoked$EEG_gamma_Beat2effect_Accent2 - Full_dataset_evoked$EEG_gamma_Beat2effect_Accent1
+
+cor_eeg_only <- Full_dataset_evoked[,c(3:5,7,23,26,29,32)]
+
+eeg.cor <- partial.r(cor_eeg_only, c(5:8), c(1:4),use="pairwise",method="spearman")
+
+# With the Benjamini-Hochberg correction
+cp_eeg_BH <- corr.p(eeg.cor, n=21, adjust="BH", ci = TRUE)
+# r
+print(cp_eeg_BH$r, digits = 2)
+# p
+print(cp_eeg_BH$p, digits = 3) # look above the diagnonal to see the corrected probabilities.
+```
+
+See "Brain-behavior analyses - evoked beta and gamma - OSF Oct2023.Rmd" for the code to obtain the results reported in Table 4S.
